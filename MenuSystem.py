@@ -3,7 +3,7 @@ from machine import Pin
 import micropython
 import time
 
-# micropython reference says this is good practice, so I'm doing it I guess
+# micropython reference says this is good practice for interrupts, so I'm doing it I guess
 micropython.alloc_emergency_exception_buf(100)
 
 
@@ -13,8 +13,11 @@ button_press = Pin(4, Pin.IN, Pin.PULL_UP)
 
 
 class Menu():
-    def __init__(self, is_parent, title) -> None:
+    def __init__(self, is_parent, is_child, title, parent=None) -> None:
         self.is_parent = bool(is_parent)
+        self.is_child = bool(is_child)
+        self.parent = parent
+        self.in_focus = False
         
         self.ITEM_SPACING = 15
         self.MARGIN = 10
@@ -28,7 +31,6 @@ class Menu():
         self.selected_item = 0
         self.direction = 0
         self.item_selected = False
-        
         
 
         # Predefine color values
@@ -46,21 +48,29 @@ class Menu():
         self.lcd.rect(0, 0, 160, 128, self.BLACK, True)
         
 
-
         button_up.irq(trigger=Pin.IRQ_FALLING, handler=self.handle_button_press)
         button_down.irq(trigger=Pin.IRQ_FALLING, handler=self.handle_button_press)
         button_press.irq(trigger=Pin.IRQ_FALLING, handler=self.handle_button_press)
         self.button_pressed = False
 
-        if self.is_parent:
-            self.lcd.rect(self.title_x-4, self.title_y-4, self.lcd.width, 16, self.GREEN)
-            self.lcd.text(self.title, self.title_x, self.title_y, self.GREEN)
-            self.lcd.show()
+        if self.is_parent and not self.is_child:
+            self.in_focus = True
 
-        elif not self.is_parent:
-            back = MenuItem("<- Back", self.close())
+        if self.is_parent:
+            self.create_title()
+
+        elif self.is_child:
+            back = MenuItem("<- Back", self.close(), "option")
             self.add(back)
-        
+    
+    def set_focus(self, value):
+        self.in_focus = bool(value)
+            
+    
+    def create_title(self):
+        self.lcd.rect(self.title_x-4, self.title_y-4, self.lcd.width, 16, self.GREEN)
+        self.lcd.text(self.title, self.title_x, self.title_y, self.GREEN)
+        self.lcd.show()
         
 
     def close(self):
@@ -81,7 +91,12 @@ class Menu():
     
     
     def run_item(self):
-        self.items[self.selected_item].run()
+        if self.items[self.selected_item].type == "option":
+            self.items[self.selected_item].run()
+        elif self.items[self.selected_item].type == "submenu":
+            self.set_focus(False)
+            self.items[self.selected_item].set_focus(True)
+            self.items[self.selected_item].run()
 
 
     def navigate(self):
@@ -95,6 +110,7 @@ class Menu():
         # use % to wrap around menu items
         self.selected_item = (self.selected_item + self.direction) % len(self.items)
         self.direction = 0
+        
     
 
     def set_position(self, item, index):
@@ -138,17 +154,22 @@ class Menu():
     
 
     def update(self):
-        self.navigate()
-        self.render()
+        if self.in_focus:
+            self.navigate()
+            self.render()
+        if self.button_pressed:
+            print(self.items[self.selected_item].label)
+            self.button_pressed = False
 
 
 
 class MenuItem:
-    def __init__(self, label, function):
+    def __init__(self, label, function, type):
         self.label = str(label)
         self.function = function
         self.x = 10
         self.y = 10
+        self.type = str(type)
 
     def set_x(self, x):
         self.x = x
@@ -167,10 +188,10 @@ class MenuItem:
 
 
 
-menu = Menu(is_parent=True, title="MENU")
 
 
 
+menu = Menu(is_parent=True, is_child=False, title="MENU")
 
 
 def f1():
@@ -183,16 +204,15 @@ def f3():
     print("func3")
 
 
-item_1 = MenuItem("Option 1", f1)
-item_2 = MenuItem("Option 2", f2)
-item_3 = MenuItem("Option 3", f3)
+item_1 = MenuItem("Option 1", f1, "option")
+item_2 = MenuItem("Option 2", f2, "option")
+item_3 = MenuItem(label="Option 3", function=f3, type="option")
 
-sub_menu = Menu(is_parent=False, title="SUB MENU")
-item_sub = MenuItem(sub_menu.title, sub_menu.update)
+#sub_menu = Menu(is_parent=False, is_child=True, title="SUB MENU")
+#item_sub = MenuItem(label=sub_menu.title, function=sub_menu, type="submenu")
 
 
-
-menu.add(item_sub)
+#menu.add(item_sub)
 menu.add(item_2)
 menu.add(item_3)
 menu.add(item_3)
@@ -200,20 +220,6 @@ menu.add(item_3)
 menu.add(item_3)
 menu.add(item_3)
 
-
-
-
-for item in menu.items:
-    print(item.label)
-    item.run()
-
-"""while True:
-    if not button_up.value():
-        menu.navigate(1)
-    elif not button_down.value():
-        menu.navigate(-1)
-    time.sleep(0.1)
-"""
 
 
 while True:
