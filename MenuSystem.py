@@ -12,6 +12,8 @@ button_down = Pin(3, Pin.IN, Pin.PULL_UP)
 button_press = Pin(4, Pin.IN, Pin.PULL_UP)
 
 
+
+
 class Menu():
     def __init__(self, is_parent, is_child, title, parent=None) -> None:
         # To be used for submenus
@@ -50,54 +52,67 @@ class Menu():
         self.lcd = lcd.LCD_1inch8()
         self.lcd.rect(0, 0, 160, 128, self.BLACK, True)
         
-        self.button_pressed = False
 
         # Initialize top parent menu in focus
         if self.is_parent and not self.is_child:
-            self.in_focus = True
-            self.activate_buttons()
-
-        if self.is_parent:
-            self.create_title()
+            self.set_focus(True)
 
         # Add menuitem to navigate to supermenu
         elif self.is_child:
-            back = MenuItem("<- Back", self.close, "option")
-            self.add(back)
+            if self.parent:
+                back = MenuItem(self.parent.title, self.close, "option")
+                self.add(back)
+            
 
-    
-    # Button irq functionality should be dependent on whether menu instance is in focus or not
     def activate_buttons(self):
         button_up.irq(trigger=Pin.IRQ_FALLING, handler=self.handle_button_press)
         button_down.irq(trigger=Pin.IRQ_FALLING, handler=self.handle_button_press)
         button_press.irq(trigger=Pin.IRQ_FALLING, handler=self.handle_button_press)
+
     
     def deactivate_buttons(self):
         button_up.irq(handler=None)
         button_down.irq(handler=None)
         button_press.irq(handler=None)
 
+
     
     def set_focus(self, value):
-        if value and not self.in_focus:
-            self.activate_buttons()
+        global current_menu
         self.in_focus = bool(value)
+        if value:
+            current_menu = self
+            self.activate_buttons()
+        else:
+            self.deactivate_buttons()
+        
+    
+    def flip_focus(self):
+        self.in_focus = not self.in_focus
+        self.switch_buttons()
+    
+    
+    def switch_buttons(self):
+        if self.in_focus:
+            self.activate_buttons()
+        else:
+            self.deactivate_buttons()
             
     
     def create_title(self):
-        self.lcd.rect(self.title_x-4, self.title_y-4, self.lcd.width, 16, self.GREEN)
+        self.lcd.rect(self.title_x,  self.title_y, self.lcd.width, 8, self.BG_COLOR, True)
+        self.lcd.rect(self.title_x-4, self.title_y-4, self.lcd.width-12, 16, self.GREEN)
         self.lcd.text(self.title, self.title_x, self.title_y, self.GREEN)
         self.lcd.show()
-        
+    
 
     def close(self):
+        global current_menu
         if self.parent:
             self.set_focus(False)
-            self.deactivate_buttons()
-
             self.parent.set_focus(True)
-            self.parent.activate_buttons()
-            
+            current_menu = self.parent
+
     
     def add(self, item):
         self.items.append(item)
@@ -118,9 +133,8 @@ class Menu():
 
         # if item is submenu, submenu gains focus, and supermenu loses focus
         elif self.items[self.selected_item].type == "submenu":
-            self.deactivate_buttons()
-            self.set_focus(False)
-            self.items[self.selected_item].target.set_focus(True)
+            self.flip_focus()
+            self.items[self.selected_item].target.flip_focus()
             self.items[self.selected_item].run()
 
 
@@ -128,11 +142,9 @@ class Menu():
         # divide by 0 proofing
         if len(self.items) == 0:
             return
-    
         if self.item_selected:
             self.run_item()
             self.item_selected = False
-
         # use % to wrap around menu items
         self.selected_item = (self.selected_item + self.direction) % len(self.items)
         self.direction = 0
@@ -167,29 +179,26 @@ class Menu():
 
 
     def handle_button_press(self, pin):
-        self.button_pressed = True
+        if self.in_focus:
 
-        # navigate up and down
-        if pin == button_up and not button_up.value():
-            self.direction = -1
-        elif pin == button_down and not button_down.value():
-            self.direction = 1
+            # navigate up and down
+            if pin == button_up and not button_up.value():
+                self.direction = -1
+            elif pin == button_down and not button_down.value():
+                self.direction = 1
 
-        # run option
-        elif pin == button_press and not button_press.value():
-            self.item_selected = True
-        time.sleep(0.05)
+            # run option
+            elif pin == button_press and not button_press.value():
+                self.item_selected = True
+            time.sleep(0.05)
     
 
     def update(self):
         if self.in_focus:
+            self.create_title()
             self.navigate()
             self.render()
-        
-        # Purely for debugging purposes
-        if self.button_pressed:
-            print(self.items[self.selected_item].label)
-            self.button_pressed = False
+
 
 
 
@@ -214,18 +223,13 @@ class MenuItem:
         return self.y
     
     def run(self):
+        global current_menu
         if isinstance(self.target, Menu):
             self.target.set_focus(True)
-            self.target.update()
+            current_menu = self.target
         else:
             self.target()
 
-
-
-
-
-
-menu = Menu(is_parent=True, is_child=False, title="MENU")
 
 
 def f1():
@@ -238,15 +242,22 @@ def f3():
     print("func3")
 
 
+
+menu = Menu(is_parent=True, is_child=False, title="MAIN MENU")
+
+
+
 item_1 = MenuItem("Option 1", f1, "option")
 item_2 = MenuItem("Option 2", f2, "option")
 item_3 = MenuItem(label="Option 3", target=f3, type="option")
 
-#sub_menu = Menu(is_parent=False, is_child=True, title="SUB MENU")
-#item_sub = MenuItem(label=sub_menu.title, target=sub_menu, type="submenu")
+sub_option = MenuItem("Sub Option 1", f1, "option")
+sub_menu = Menu(is_parent=False, is_child=True, title="SUB MENU", parent=menu)
+sub_menu.add(sub_option)
+sub_menu_item = MenuItem(label=sub_menu.title, target=sub_menu, type="submenu")
 
 
-#menu.add(item_sub)
+menu.add(sub_menu_item)
 menu.add(item_2)
 menu.add(item_3)
 menu.add(item_3)
@@ -255,6 +266,7 @@ menu.add(item_3)
 menu.add(item_3)
 
 
+current_menu = menu
 
 while True:
-    menu.update()
+    current_menu.update()
